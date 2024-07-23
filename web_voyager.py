@@ -17,7 +17,7 @@ async def main():
         # "Please explain the today's XKCD comic for me. Why is it funny?",
         # "What are the latest blog posts from langchain?",
         # "Could you check google maps to see when i should leave to get to SFO by 7 o'clock? starting from SF downtown."
-        "Find me distance between Singapore to Malaysia"
+        "what is google business?"
     ]
 
     for question in questions:

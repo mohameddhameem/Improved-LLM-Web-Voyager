@@ -5,6 +5,8 @@ from langgraph.graph import END, StateGraph
 from agent_types import AgentState
 from agent import agent
 from tools import click, type_text, scroll, wait, go_back, to_google
+from agent_types import AgentState
+from agent import AgentAction  # Add this import
 
 def update_scratchpad(state: AgentState):
     """After a tool is invoked, we want to update
@@ -17,15 +19,20 @@ def update_scratchpad(state: AgentState):
     else:
         txt = "Previous action observations:\n"
         step = 1
-    txt += f"\n{step}. {state['observation']}"
+    
+    prediction = state['prediction']
+    txt += f"\n{step}. Action: {prediction.action}, Args: {prediction.args}, Observation: {state['observation']}"
 
     return {**state, "scratchpad": [SystemMessage(content=txt)]}
 
+MAX_STEPS = 10  # Adjust this value as needed
+
 def select_tool(state: AgentState):
-    # Any time the agent completes, this function
-    # is called to route the output to a tool or
-    # to the end user.
-    action = state["prediction"]["action"]
+    prediction = state["prediction"]
+    if prediction.step_count >= MAX_STEPS:
+        return END
+    
+    action = prediction.action
     if action == "ANSWER":
         return END
     if action == "retry":

@@ -1,4 +1,7 @@
 import asyncio
+from typing import List
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.output_parsers import PydanticOutputParser
 import base64
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, chain
@@ -10,10 +13,46 @@ from langchain.prompts.chat import MessagesPlaceholder
 from langchain.prompts.chat import HumanMessagePromptTemplate
 from langchain_core.prompts import PromptTemplate
 from langchain_core.prompts.image import ImagePromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 
 # Load mark_page_script
 with open("mark_page.js") as f:
     mark_page_script = f.read()
+
+from typing import Union
+
+def parse_with_step_count(x: str, step_count: Union[int, str]):
+    return AgentAction.parse_raw(x, int(step_count))
+
+class AgentAction(BaseModel):
+    action: str = Field(description="The action to take")
+    args: List[str] = Field(description="Arguments for the action")
+    thought: str = Field(description="Reasoning behind the action")
+    step_count: int = Field(default=0, description="Number of steps taken")
+
+    @classmethod
+    def parse_raw(cls, raw_string: str, step_count: int) -> 'AgentAction':
+        # Split the input string into thought and action parts
+        parts = raw_string.split("\n")
+        thought = ""
+        action = ""
+        args = []
+        
+        for part in parts:
+            if part.startswith("Thought:"):
+                thought = part.replace("Thought:", "").strip()
+            elif part.startswith("Action:"):
+                action_part = part.replace("Action:", "").strip()
+                action_split = action_part.split(maxsplit=1)
+                action = action_split[0]
+                if len(action_split) > 1:
+                    args = [arg.strip() for arg in action_split[1].split(';')]
+        
+        return cls(action=action, args=args, thought=thought, step_count=int(step_count))
+
+
+
+output_parser = PydanticOutputParser(pydantic_object=AgentAction)
 
 
 @chain_decorator
@@ -76,26 +115,41 @@ prompt = ChatPromptTemplate(
     messages=[
         SystemMessagePromptTemplate(
             prompt=[
-                PromptTemplate.from_template("""Imagine you are a robot browsing the web, just like humans. 
-                                     Now you need to complete a task. In each iteration, you will receive an Observation that includes a screenshot of a webpage and some texts. 
-                                     This screenshot will\nfeature Numerical Labels placed in the TOP LEFT corner of each Web Element. 
-                                     Carefully analyze the visual\ninformation to identify the Numerical Label corresponding to the Web Element that requires interaction, then follow the guidelines and choose one of the following actions:\n\n
-                                     1. Click a Web Element.\n
-                                     2. Delete existing content in a textbox and then type content.\n
-                                     3. Scroll up or down.\n
-                                     4. Wait \n
-                                     5. Go back\n
-                                     7. Return to google to start over.\n
-                                     8. Respond with the final answer\n\n
-                                     Correspondingly, Action should STRICTLY follow the format:\n\n- Click [Numerical_Label] \n- Type [Numerical_Label]; [Content] \n- Scroll [Numerical_Label or WINDOW]; [up or down] \n- Wait \n- GoBack\n- Google\n- ANSWER; [content]\n\n
-                                     Key Guidelines You MUST follow:
-                                     \n\n* Action guidelines *\n1) Execute only one action per iteration.\n
-                                     2) When clicking or typing, ensure to select the correct bounding box.\n
-                                     3) Numeric labels lie in the top-left corner of their corresponding bounding boxes and are colored the same.\n\n
-                                     * Web Browsing Guidelines *\n
-                                     1) Don't interact with useless web elements like Login, Sign-in, donation that appear in Webpages\n
-                                     2) Select strategically to minimize time wasted.\n\n
-                                     Your reply should strictly follow the format:\n\nThought: {{Your brief thoughts (briefly summarize the info that will help ANSWER)}}\nAction: {{One Action format you choose}}\nThen the User will provide:\nObservation: {{A labeled screenshot Given by User}}\n"""),
+                PromptTemplate.from_template(
+                    """Imagine you are a robot browsing the web, just like humans. 
+                    Your task is to answer the user's question about Google Business.
+                    In each iteration, you will receive an Observation that includes a screenshot of a webpage and some texts.
+                    This screenshot will feature Numerical Labels placed in the TOP LEFT corner of each Web Element.
+                    Carefully analyze the visual information to identify the Numerical Label corresponding to the Web Element that requires interaction, then follow the guidelines and choose one of the following actions:
+
+                    1. Click a Web Element.
+                    2. Delete existing content in a textbox and then type content.
+                    3. Scroll up or down.
+                    4. Wait 
+                    5. Go back
+                    6. Return to google to start over.
+                    7. Respond with the final answer
+
+                    Key Guidelines You MUST follow:
+
+                    * Action guidelines *
+                    1) Execute only one action per iteration.
+                    2) When clicking or typing, ensure to select the correct bounding box.
+                    3) Numeric labels lie in the top-left corner of their corresponding bounding boxes and are colored the same.
+                    4) After gathering sufficient information, provide an ANSWER.
+                    5) If you've taken more than 8 steps, you MUST provide an ANSWER based on the information gathered so far.
+
+                    * Web Browsing Guidelines *
+                    1) Don't interact with useless web elements like Login, Sign-in, donation that appear in Webpages
+                    2) Select strategically to minimize time wasted.
+
+                    Your response should be in the following format:
+                    Thought: [Your reasoning]
+                    Action: [Action] [Arguments separated by semicolons if any]
+
+                    Remember, your goal is to answer the question about Google Business. If you have gathered enough information, use the ANSWER action to provide the final response.
+                    """
+                ),
             ],
         ),
         MessagesPlaceholder(
@@ -120,11 +174,31 @@ prompt = ChatPromptTemplate(
         "img",
         "input",
     ],
-    partial_variables={"scratchpad": []},
+    partial_variables={
+        "scratchpad": [],
+    },
 )
 
 llm = ChatOpenAI(model="gpt-4o-mini", max_tokens=4096)
 
-agent = annotate | RunnablePassthrough.assign(
-    prediction=format_descriptions | prompt | llm | StrOutputParser() | parse
+
+
+def increment_step(state):
+    step_count = state.get("step_count", 0) + 1
+    return {**state, "step_count": step_count}
+
+
+
+agent = (
+    annotate 
+    | RunnablePassthrough.assign(step_count=increment_step)
+    | RunnablePassthrough.assign(
+        prediction=RunnablePassthrough.assign(
+            parsed_output=format_descriptions 
+            | prompt 
+            | llm 
+            | StrOutputParser()
+        )
+        | RunnableLambda(lambda x: parse_with_step_count(x["parsed_output"], x["step_count"]["step_count"]))
+    )
 )
