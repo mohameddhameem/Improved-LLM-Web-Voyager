@@ -6,7 +6,7 @@ import json
 from typing import List, Optional, TypedDict
 
 import nest_asyncio
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import async_playwright, Page
 from IPython import display
 from openai import AsyncOpenAI
 
@@ -16,7 +16,6 @@ nest_asyncio.apply()
 # Initialize the OpenAI client
 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-
 # Type definitions
 class BBox(TypedDict):
     x: float
@@ -25,11 +24,9 @@ class BBox(TypedDict):
     type: str
     ariaLabel: str
 
-
 class Prediction(TypedDict):
     action: str
     args: Optional[List[str]]
-
 
 class AgentState(TypedDict):
     page: Page
@@ -40,21 +37,17 @@ class AgentState(TypedDict):
     bbox_descriptions: str
     function_args: dict
 
-
 # Tool functions
 async def click(state: AgentState):
     page = state["page"]
     bbox_id = state["function_args"]["bbox_id"]
     try:
         bbox = state["bboxes"][bbox_id]
-    except Exception as e:
-        print(f"Error accessing bounding box {bbox_id}: {e}")
+    except Exception:
         return f"Error: no bbox for : {bbox_id}"
     x, y = bbox["x"], bbox["y"]
     await page.mouse.click(x, y)
-    print(f"Clicked on bounding box {bbox_id} at ({x}, {y})")
     return f"Clicked {bbox_id}"
-
 
 async def type_text(state: AgentState):
     page = state["page"]
@@ -62,8 +55,7 @@ async def type_text(state: AgentState):
     text_content = state["function_args"]["text"]
     try:
         bbox = state["bboxes"][bbox_id]
-    except Exception as e:
-        print(f"Error accessing bounding box {bbox_id}: {e}")
+    except Exception:
         return f"Error: no bbox for : {bbox_id}"
     x, y = bbox["x"], bbox["y"]
     await page.mouse.click(x, y)
@@ -72,9 +64,7 @@ async def type_text(state: AgentState):
     await page.keyboard.press("Backspace")
     await page.keyboard.type(text_content)
     await page.keyboard.press("Enter")
-    print(f"Typed '{text_content}' into bounding box {bbox_id} at ({x}, {y})")
     return f"Typed {text_content} and submitted"
-
 
 async def scroll(state: AgentState):
     page = state["page"]
@@ -82,61 +72,44 @@ async def scroll(state: AgentState):
     direction = state["function_args"]["direction"]
     if target.upper() == "WINDOW":
         scroll_amount = 500
-        scroll_direction = (
-            -scroll_amount if direction.lower() == "up" else scroll_amount
-        )
+        scroll_direction = -scroll_amount if direction.lower() == "up" else scroll_amount
         await page.evaluate(f"window.scrollBy(0, {scroll_direction})")
-        print(f"Scrolled {direction} in the window")
         return f"Scrolled {direction} in window"
     else:
         try:
             target_id = int(target)
             if target_id < 0 or target_id >= len(state["bboxes"]):
-                print(f"Error: Invalid bounding box index {target_id}")
                 return f"Error: Invalid bounding box index {target_id}"
             bbox = state["bboxes"][target_id]
             scroll_amount = 200
             x, y = bbox["x"], bbox["y"]
-            scroll_direction = (
-                -scroll_amount if direction.lower() == "up" else scroll_amount
-            )
+            scroll_direction = -scroll_amount if direction.lower() == "up" else scroll_amount
             await page.mouse.move(x, y)
             await page.mouse.wheel(0, scroll_direction)
-            print(f"Scrolled {direction} in element {target_id}")
             return f"Scrolled {direction} in element {target_id}"
         except ValueError:
-            print(f"Error: Invalid target '{target}'. Expected 'WINDOW' or a number.")
             return f"Error: Invalid target '{target}'. Expected 'WINDOW' or a number."
         except Exception as e:
-            print(f"Error while scrolling: {str(e)}")
             return f"Error while scrolling: {str(e)}"
-
 
 async def wait(state: AgentState):
     sleep_time = 5
     await asyncio.sleep(sleep_time)
-    print(f"Waited for {sleep_time} seconds")
     return f"Waited for {sleep_time}s."
-
 
 async def go_back(state: AgentState):
     page = state["page"]
     await page.go_back()
-    print(f"Navigated back to {page.url}")
     return f"Navigated back a page to {page.url}."
-
 
 async def to_google(state: AgentState):
     page = state["page"]
     await page.goto("https://www.google.com/")
-    print("Navigated to google.com")
     return "Navigated to google.com."
-
 
 # Load JavaScript for page marking
 with open("mark_page.js") as f:
     mark_page_script = f.read()
-
 
 async def mark_page(page, max_retries=3):
     for attempt in range(max_retries):
@@ -147,7 +120,6 @@ async def mark_page(page, max_retries=3):
                     bboxes = await page.evaluate("markPage()")
                     screenshot = await page.screenshot()
                     await page.evaluate("unmarkPage()")
-                    print("Page marked and bounding boxes retrieved")
                     return {
                         "img": base64.b64encode(screenshot).decode(),
                         "bboxes": bboxes,
@@ -167,12 +139,9 @@ async def mark_page(page, max_retries=3):
                     "bboxes": [],
                 }
 
-
 async def annotate(state):
     marked_page = await mark_page(state["page"])
-    print(f"Annotated page state: {marked_page}")
     return {**state, **marked_page}
-
 
 def format_descriptions(state):
     labels = []
@@ -183,9 +152,7 @@ def format_descriptions(state):
         el_type = bbox.get("type")
         labels.append(f'{i} (<{el_type}/>): "{text}"')
     bbox_descriptions = "\nValid Bounding Boxes:\n" + "\n".join(labels)
-    print(f"Bounding box descriptions: {bbox_descriptions}")
     return {**state, "bbox_descriptions": bbox_descriptions}
-
 
 # Define tools for OpenAI function calling
 tools = [
@@ -199,12 +166,12 @@ tools = [
                 "properties": {
                     "bbox_id": {
                         "type": "integer",
-                        "description": "The ID of the bounding box to click",
+                        "description": "The ID of the bounding box to click"
                     }
                 },
-                "required": ["bbox_id"],
-            },
-        },
+                "required": ["bbox_id"]
+            }
+        }
     },
     {
         "type": "function",
@@ -216,13 +183,16 @@ tools = [
                 "properties": {
                     "bbox_id": {
                         "type": "integer",
-                        "description": "The ID of the bounding box to type into",
+                        "description": "The ID of the bounding box to type into"
                     },
-                    "text": {"type": "string", "description": "The text to type"},
+                    "text": {
+                        "type": "string",
+                        "description": "The text to type"
+                    }
                 },
-                "required": ["bbox_id", "text"],
-            },
-        },
+                "required": ["bbox_id", "text"]
+            }
+        }
     },
     {
         "type": "function",
@@ -234,17 +204,17 @@ tools = [
                 "properties": {
                     "target": {
                         "type": "string",
-                        "description": "WINDOW or the ID of the bounding box to scroll",
+                        "description": "WINDOW or the ID of the bounding box to scroll"
                     },
                     "direction": {
                         "type": "string",
                         "enum": ["up", "down"],
-                        "description": "The direction to scroll",
-                    },
+                        "description": "The direction to scroll"
+                    }
                 },
-                "required": ["target", "direction"],
-            },
-        },
+                "required": ["target", "direction"]
+            }
+        }
     },
     {
         "type": "function",
@@ -254,8 +224,8 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-            },
-        },
+            }
+        }
     },
     {
         "type": "function",
@@ -265,8 +235,8 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-            },
-        },
+            }
+        }
     },
     {
         "type": "function",
@@ -276,106 +246,100 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-            },
-        },
-    },
+            }
+        }
+    }
 ]
-
 
 async def call_openai_with_tools(messages, tools):
     response = await client.chat.completions.create(
         model="gpt-4o-mini",  # or whichever model you're using
         messages=messages,
         tools=tools,
-        tool_choice="auto",
+        tool_choice="auto"
     )
-    print(f"OpenAI response: {response}")
-    return response
-
+    return response.choices[0].message
 
 async def call_agent(question: str, page, max_steps: int = 150):
     messages = [{"role": "user", "content": question}]
     state = await annotate({"page": page})
     state = format_descriptions(state)
-    if "bbox_descriptions" in state and state["bbox_descriptions"]:
-        messages.append(
-            {
-                "role": "system",
-                "content": f"Current page state: {state['bbox_descriptions']}",
-            }
-        )
+    if 'bbox_descriptions' in state and state['bbox_descriptions']:
+        messages.append({"role": "system", "content": f"Current page state: {state['bbox_descriptions']}"})
     else:
-        messages.append({"role": "system", "content": "No bounding boxes detected."})
+        messages.append({"role": "system", "content": "Current page state could not be determined. Please navigate to a relevant page."})
 
     for step in range(max_steps):
-        print(f"Step {step + 1}: Current question: {question}")
         response = await call_openai_with_tools(messages, tools)
-
-        if (
-            response.role == "assistant"
-            and hasattr(response, "tool_calls")
-            and response.tool_calls
-        ):
-            # Use the tool as suggested by the assistant
-            tool_call = response.tool_calls[0]
-
-            # Accessing attributes correctly
-            function_name = tool_call.function.name
-            arguments = tool_call.arguments  # Correct way to get arguments
-
-            # Parse arguments if they are in string format
-            function_args = (
-                json.loads(arguments) if isinstance(arguments, str) else arguments
-            )
-
-            if function_name in globals() and callable(globals()[function_name]):
-                # Call the function with the extracted parameters
-                print(
-                    f"Calling function '{function_name}' with arguments {function_args}"
-                )
-                result = await globals()[function_name](
-                    {**state, "function_args": function_args}
-                )
-                messages.append({"role": "tool", "content": result})
-            else:
-                error_message = f"Error: tool {function_name} not found."
-                print(error_message)
-                messages.append({"role": "tool", "content": error_message})
-
-        elif response.role == "assistant":
-            # If the assistant returns a final answer
-            print("Final answer from assistant:", response.content)
+        
+        if response.tool_calls:
+            # Add the assistant's message with tool_calls
+            messages.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
+            
+            for tool_call in response.tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                # Update the state with the current function args
+                state["function_args"] = function_args
+                
+                # Call the appropriate tool function
+                if function_name == "click":
+                    result = await click(state)
+                elif function_name == "type_text":
+                    result = await type_text(state)
+                elif function_name == "scroll":
+                    result = await scroll(state)
+                elif function_name == "wait":
+                    result = await wait(state)
+                elif function_name == "go_back":
+                    result = await go_back(state)
+                elif function_name == "to_google":
+                    result = await to_google(state)
+                else:
+                    result = f"Unknown function: {function_name}"
+                
+                # Add the tool response
+                messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": function_name, "content": result})
+        else:
+            # If no function was called, treat it as the final answer
             return response.content
 
-        # Prepare for the next iteration
-        state = await annotate(state)
+        # Update the page state
+        state = await annotate({"page": page})
         state = format_descriptions(state)
-        if "bbox_descriptions" in state and state["bbox_descriptions"]:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": f"Updated page state: {state['bbox_descriptions']}",
-                }
-            )
+        if 'bbox_descriptions' in state and state['bbox_descriptions']:
+            messages.append({"role": "system", "content": f"Current page state: {state['bbox_descriptions']}"})
+        else:
+            messages.append({"role": "system", "content": "Current page state could not be determined. Please navigate to a relevant page."})
 
-    print("Reached maximum steps without a solution.")
-    return "Reached maximum steps without a solution."
+        # Display the current state (optional)
+        display.clear_output(wait=False)
+        print(f"Step {step + 1}: {function_name if response.tool_calls else 'No function called'}")
+        if 'img' in state and state['img']:
+            display.display(display.Image(base64.b64decode(state['img'])))
 
+    return "Max steps reached without a final answer."
 
 async def main():
-    question = "What are the latest blog posts from langchain?"
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
         page = await browser.new_page()
+        await page.goto("https://www.google.com")
 
-        print("Starting agent...")
-        res = await call_agent(question, page)
+        # Example usage
+        questions = [
+            "What are the latest blog posts from langchain?",
+        ]
 
-        print(f"Final Result: {res}")
+        for question in questions:
+            print(f"\nQuestion: {question}")
+            res = await call_agent(question, page)
+            print(f"Final response: {res}")
 
+        # Close the browser
         await browser.close()
 
-
+# Run the main function
 if __name__ == "__main__":
     asyncio.run(main())
