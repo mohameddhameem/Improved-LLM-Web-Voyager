@@ -273,38 +273,38 @@ async def call_agent(question: str, page, max_steps: int = 150):
     for step in range(max_steps):
         response = await call_openai_with_tools(messages, tools)
         
-        if response.tool_calls:
-            # Add the assistant's message with tool_calls
-            messages.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
-            
-            for tool_call in response.tool_calls:
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-                
-                # Update the state with the current function args
-                state["function_args"] = function_args
-                
-                # Call the appropriate tool function
-                if function_name == "click":
-                    result = await click(state)
-                elif function_name == "type_text":
-                    result = await type_text(state)
-                elif function_name == "scroll":
-                    result = await scroll(state)
-                elif function_name == "wait":
-                    result = await wait(state)
-                elif function_name == "go_back":
-                    result = await go_back(state)
-                elif function_name == "to_google":
-                    result = await to_google(state)
-                else:
-                    result = f"Unknown function: {function_name}"
-                
-                # Add the tool response
-                messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": function_name, "content": result})
-        else:
-            # If no function was called, treat it as the final answer
+        # Check if the response is a final answer
+        if not response.tool_calls:
+            print(f"Final response: {response.content}")
             return response.content
+
+        # If it's not a final answer, continue with tool calls
+        messages.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
+        
+        for tool_call in response.tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            
+            # Update the state with the current function args
+            state["function_args"] = function_args
+            
+            # Call the appropriate tool function
+            if function_name == "click":
+                result = await click(state)
+            elif function_name == "type_text":
+                result = await type_text(state)
+            elif function_name == "scroll":
+                result = await scroll(state)
+            elif function_name == "wait":
+                result = await wait(state)
+            elif function_name == "go_back":
+                result = await go_back(state)
+            elif function_name == "to_google":
+                result = await to_google(state)
+            else:
+                result = f"Unknown function: {function_name}"
+            
+            messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": function_name, "content": result})
 
         # Update the page state
         state = await annotate({"page": page})
