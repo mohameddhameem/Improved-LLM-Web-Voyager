@@ -274,6 +274,9 @@ async def call_agent(question: str, page, max_steps: int = 150):
         response = await call_openai_with_tools(messages, tools)
         
         if response.tool_calls:
+            # Add the assistant's message with tool_calls
+            messages.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
+            
             for tool_call in response.tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
@@ -297,6 +300,7 @@ async def call_agent(question: str, page, max_steps: int = 150):
                 else:
                     result = f"Unknown function: {function_name}"
                 
+                # Add the tool response
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": function_name, "content": result})
         else:
             # If no function was called, treat it as the final answer
