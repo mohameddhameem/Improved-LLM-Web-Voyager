@@ -1,24 +1,18 @@
-from fastapi import FastAPI, Depends, HTTPException, Form
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import OAuth2AuthorizationCodeBearer
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import RedirectResponse
-from msal import PublicClientApplication
+from fastapi.responses import RedirectResponse
+from msal import ConfidentialClientApplication
 import uvicorn
-import secrets
-import base64
-import hashlib
 
 app = FastAPI()
 
-# Add session middleware
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
-
 # Azure AD configuration
 CLIENT_ID = "your-azure-client-id"
+CLIENT_SECRET = "your-azure-client-secret"
 TENANT_ID = "your-azure-tenant-id"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = ["User.Read"]  # Adjust scopes as needed
-REDIRECT_URI = "http://localhost:8000/token"
+REDIRECT_URI = "http://localhost:8000/docs/oauth2-redirect"  # Swagger UI's redirect URI
 
 # OAuth2 scheme for Swagger UI
 oauth2_scheme = OAuth2AuthorizationCodeBearer(
@@ -28,49 +22,38 @@ oauth2_scheme = OAuth2AuthorizationCodeBearer(
 )
 
 # MSAL configuration
-msal_app = PublicClientApplication(
+msal_app = ConfidentialClientApplication(
     CLIENT_ID,
-    authority=AUTHORITY
+    authority=AUTHORITY,
+    client_credential=CLIENT_SECRET
 )
 
-def generate_code_verifier():
-    return secrets.token_urlsafe(32)
-
-def generate_code_challenge(code_verifier):
-    code_challenge = hashlib.sha256(code_verifier.encode('utf-8')).digest()
-    return base64.urlsafe_b64encode(code_challenge).decode('utf-8').replace('=', '')
-
 @app.get("/login")
-async def login(request):
-    code_verifier = generate_code_verifier()
-    code_challenge = generate_code_challenge(code_verifier)
-    request.session['code_verifier'] = code_verifier
-    
+async def login():
     auth_url = msal_app.get_authorization_request_url(
         SCOPE,
-        redirect_uri=REDIRECT_URI,
-        code_challenge=code_challenge,
-        code_challenge_method="S256"
+        redirect_uri=REDIRECT_URI
     )
     return RedirectResponse(auth_url)
 
 @app.get("/token")
-async def get_token(request, code: str):
-    code_verifier = request.session.get('code_verifier')
-    if not code_verifier:
-        raise HTTPException(status_code=400, detail="No code verifier found")
+async def get_token(request: Request):
+    code = request.query_params.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code provided")
     
     result = msal_app.acquire_token_by_authorization_code(
         code,
         SCOPE,
-        redirect_uri=REDIRECT_URI,
-        code_verifier=code_verifier
+        redirect_uri=REDIRECT_URI
     )
     if "access_token" in result:
         return {"access_token": result["access_token"]}
     raise HTTPException(status_code=401, detail="Authentication failed")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Here you would typically validate the token
+    # For demonstration, we're just checking if it exists
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return token

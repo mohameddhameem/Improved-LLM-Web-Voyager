@@ -2,30 +2,21 @@ import os
 import asyncio
 import platform
 import base64
-import re
 import json
-from typing import List, Optional, TypedDict, Annotated, Sequence, TypeVar
-from typing import List, Optional, TypedDict, Annotated, Sequence
-from langgraph.graph import StateGraph, END
-from typing import Annotated, TypedDict
-from langgraph.graph import StateGraph, END
-
-# Create a LangGraph workflow
-from langgraph.graph import StateGraph, END
+from typing import List, Optional, TypedDict, TypeVar, Dict
+from langgraph.graph import Graph, END
+from langgraph.prebuilt import ToolExecutor
+from langchain.tools import tool
 import nest_asyncio
 from playwright.async_api import Page, async_playwright
 from IPython import display
 from openai import AsyncOpenAI
-from langgraph.graph import Graph
-from langgraph.prebuilt import ToolExecutor
-from langchain.tools import tool
 
 # Apply nest_asyncio for running async playwright in a Jupyter notebook
 nest_asyncio.apply()
 
 # Initialize the OpenAI client
 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 
 # Type definitions
 class BBox(TypedDict):
@@ -35,11 +26,9 @@ class BBox(TypedDict):
     type: str
     ariaLabel: str
 
-
 class Prediction(TypedDict):
     action: str
     args: Optional[List[str]]
-
 
 class AgentState(TypedDict):
     page: Page
@@ -48,21 +37,19 @@ class AgentState(TypedDict):
     bbox_descriptions: str
     img: str
 
-
 # Define a new type for the state
 StateType = TypeVar("StateType", bound=dict)
 
-
 # Tool functions
 @tool
-async def click(bbox_id: int, state: Annotated[StateType, "The current state"]):
+async def click(bbox_id: int, state: Dict):
     """
     Click on a specified element on the page.
-
+    
     Args:
         bbox_id (int): The ID of the bounding box to click.
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the result of the click action.
     """
@@ -75,22 +62,16 @@ async def click(bbox_id: int, state: Annotated[StateType, "The current state"]):
     await page.mouse.click(x, y)
     return f"Clicked {bbox_id}"
 
-
 @tool
-@tool
-async def type_text(
-    bbox_id: int, 
-    text: str, 
-    state: Annotated[StateType, "The current state"]
-):
+async def type_text(bbox_id: int, text: str, state: Dict):
     """
     Type text into a specified element on the page.
-
+    
     Args:
         bbox_id (int): The ID of the bounding box to type into.
         text (str): The text to type.
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the result of the typing action.
     """
@@ -108,28 +89,23 @@ async def type_text(
     await page.keyboard.press("Enter")
     return f"Typed {text} and submitted"
 
-
 @tool
-async def scroll(
-    target: str, direction: str, state: Annotated[StateType, "The current state"]
-):
+async def scroll(target: str, direction: str, state: Dict):
     """
     Scroll the page or a specific element.
-
+    
     Args:
         target (str): 'WINDOW' or the ID of the bounding box to scroll.
         direction (str): The direction to scroll ('up' or 'down').
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the result of the scroll action.
     """
     page = state["page"]
     if target.upper() == "WINDOW":
         scroll_amount = 500
-        scroll_direction = (
-            -scroll_amount if direction.lower() == "up" else scroll_amount
-        )
+        scroll_direction = -scroll_amount if direction.lower() == "up" else scroll_amount
         await page.evaluate(f"window.scrollBy(0, {scroll_direction})")
         return f"Scrolled {direction} in window"
     else:
@@ -140,9 +116,7 @@ async def scroll(
             bbox = state["bboxes"][target_id]
             scroll_amount = 200
             x, y = bbox["x"], bbox["y"]
-            scroll_direction = (
-                -scroll_amount if direction.lower() == "up" else scroll_amount
-            )
+            scroll_direction = -scroll_amount if direction.lower() == "up" else scroll_amount
             await page.mouse.move(x, y)
             await page.mouse.wheel(0, scroll_direction)
             return f"Scrolled {direction} in element {target_id}"
@@ -151,15 +125,14 @@ async def scroll(
         except Exception as e:
             return f"Error while scrolling: {str(e)}"
 
-
 @tool
-async def wait(state: Annotated[StateType, "The current state"]):
+async def wait(state: Dict):
     """
     Wait for a few seconds.
-
+    
     Args:
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the duration of the wait.
     """
@@ -167,15 +140,14 @@ async def wait(state: Annotated[StateType, "The current state"]):
     await asyncio.sleep(sleep_time)
     return f"Waited for {sleep_time}s."
 
-
 @tool
-async def go_back(state: Annotated[StateType, "The current state"]):
+async def go_back(state: Dict):
     """
     Navigate back to the previous page.
-
+    
     Args:
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the result of the navigation action.
     """
@@ -183,15 +155,14 @@ async def go_back(state: Annotated[StateType, "The current state"]):
     await page.go_back()
     return f"Navigated back a page to {page.url}."
 
-
 @tool
-async def to_google(state: Annotated[StateType, "The current state"]):
+async def to_google(state: Dict):
     """
     Navigate to Google homepage.
-
+    
     Args:
-        state (StateType): The current state of the agent.
-
+        state (dict): The current state of the agent.
+    
     Returns:
         str: A message indicating the result of the navigation action.
     """
@@ -199,11 +170,9 @@ async def to_google(state: Annotated[StateType, "The current state"]):
     await page.goto("https://www.google.com/")
     return "Navigated to google.com."
 
-
 # Load JavaScript for page marking
 with open("mark_page.js") as f:
     mark_page_script = f.read()
-
 
 async def mark_page(page, max_retries=3):
     for attempt in range(max_retries):
@@ -233,11 +202,9 @@ async def mark_page(page, max_retries=3):
                     "bboxes": [],
                 }
 
-
 async def annotate(state):
     marked_page = await mark_page(state["page"])
     return {**state, **marked_page}
-
 
 def format_descriptions(state):
     labels = []
@@ -250,7 +217,7 @@ def format_descriptions(state):
     bbox_descriptions = "\nValid Bounding Boxes:\n" + "\n".join(labels)
     return {**state, "bbox_descriptions": bbox_descriptions}
 
-
+# Define tools for OpenAI function calling
 # Define tools for OpenAI function calling
 tools = [
     {
@@ -261,16 +228,10 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "bbox_id": {
-                        "type": "integer",
-                        "description": "The ID of the bounding box to click",
-                    },
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "bbox_id": {"type": "integer", "description": "The ID of the bounding box to click"},
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["bbox_id", "state"],
+                "required": ["bbox_id", "state"]
             },
         },
     },
@@ -282,17 +243,11 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "bbox_id": {
-                        "type": "integer",
-                        "description": "The ID of the bounding box to type into",
-                    },
+                    "bbox_id": {"type": "integer", "description": "The ID of the bounding box to type into"},
                     "text": {"type": "string", "description": "The text to type"},
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["bbox_id", "text", "state"],
+                "required": ["bbox_id", "text", "state"]
             },
         },
     },
@@ -304,21 +259,11 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "WINDOW or the ID of the bounding box to scroll",
-                    },
-                    "direction": {
-                        "type": "string",
-                        "enum": ["up", "down"],
-                        "description": "The direction to scroll",
-                    },
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "target": {"type": "string", "description": "WINDOW or the ID of the bounding box to scroll"},
+                    "direction": {"type": "string", "enum": ["up", "down"], "description": "The direction to scroll"},
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["target", "direction", "state"],
+                "required": ["target", "direction", "state"]
             },
         },
     },
@@ -330,12 +275,9 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["state"],
+                "required": ["state"]
             },
         },
     },
@@ -347,12 +289,9 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["state"],
+                "required": ["state"]
             },
         },
     },
@@ -364,12 +303,9 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "state": {
-                        "type": "object",
-                        "description": "The current state of the agent",
-                    }
+                    "state": {"type": "object", "description": "The current state of the agent"}
                 },
-                "required": ["state"],
+                "required": ["state"]
             },
         },
     },
@@ -383,7 +319,6 @@ async def call_openai_with_tools(messages, tools):
         tool_choice="auto",
     )
     return response.choices[0].message
-
 
 def create_workflow(page):
     # Create a ToolExecutor with your tools
@@ -401,15 +336,6 @@ def create_workflow(page):
         return {"messages": messages + [response], "response": response, "type": "tool_executor"}
 
     # Define the tool execution node
-    # def tool_executor_node(state: AgentState) -> AgentState:
-    #     response = state["response"]
-    #     for tool_call in response.tool_calls:
-    #         function_name = tool_call.function.name
-    #         function_args = json.loads(tool_call.function.arguments)
-    #         # Use _execute instead of execute
-    #         tool_result = asyncio.run(tool_executor._execute(function_name, function_args, state))
-    #         state["messages"].append({"role": "tool", "tool_call_id": tool_call.id, "name": function_name, "content": tool_result})
-    #     return {"type": "update_state", **state}
     from langgraph.prebuilt import ToolInvocation
 
     def tool_executor_node(state: AgentState) -> AgentState:
@@ -453,7 +379,6 @@ def create_workflow(page):
 
     return workflow
 
-
 async def call_agent(question: str, page, max_steps: int = 150):
     workflow = create_workflow(page)
     
@@ -495,7 +420,6 @@ async def call_agent(question: str, page, max_steps: int = 150):
 
     return "Workflow completed without a final answer."
 
-
 async def main():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
@@ -514,7 +438,6 @@ async def main():
 
         # Close the browser
         await browser.close()
-
 
 # Run the main function
 if __name__ == "__main__":
