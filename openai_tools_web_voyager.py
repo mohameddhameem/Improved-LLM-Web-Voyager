@@ -330,7 +330,7 @@ async def main():
 
         # Example usage
         questions = [
-            "What are the latest blog posts from langchain?",
+            "What are the latest blog posts from openai?",
         ]
 
         for question in questions:
