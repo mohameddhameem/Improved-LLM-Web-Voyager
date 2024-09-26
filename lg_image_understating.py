@@ -23,7 +23,7 @@ def encode_image(image_path):
 # Node functions
 def process_image(state: State):
     image = state['image']
-    llm = ChatOpenAI(model="gpt-4o-mini", max_tokens=1000)
+    llm = ChatOpenAI(model="gpt-4o-mini", max_tokens=1000)  # Changed from "gpt-4o-mini" to "gpt-4-vision-preview"
     message = HumanMessage(
         content=[
             {"type": "text", "text": "Extract all the text from this image."},
@@ -37,17 +37,17 @@ def process_image(state: State):
     )
     response = llm.invoke([message])
     state['extracted_text'] = response.content
-    return {"extracted_text": state['extracted_text']}
+    print(f"Extracted text is: {state['extracted_text']}")
+    return state
 
 def summarize_text(state: State):
     extracted_text = state['extracted_text']
-    print(f"Extracted text is {extracted_text}")
     llm = ChatOpenAI(model="gpt-3.5-turbo", max_tokens=300)
     message = HumanMessage(content=f"Summarize the following text:\n\n{extracted_text}")
     response = llm.invoke([message])
-    print(f"Response from Smaller LLM is {response.content}")
     state['summary'] = response.content
-    return {"summary": state['summary']}
+    print(f"Summary: {state['summary']}")
+    return state
 
 # Define the graph
 workflow = Graph()
@@ -79,10 +79,13 @@ def main(image_path: str):
     )
     
     # Run the graph
-    for output in app.stream(initial_state):
-        if "summary" in output:
-            print("Summary:", output["summary"])
-            return output["summary"]
+    final_output = app.invoke(initial_state)
+    
+    print("Final output:", final_output)
+    if 'summary' in final_output:
+        print("Final Summary:", final_output['summary'])
+    else:
+        print("No summary found in the final output.")
 
 if __name__ == "__main__":
     image_path = "numbers-table.png"  
