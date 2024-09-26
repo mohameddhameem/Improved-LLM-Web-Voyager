@@ -2,11 +2,8 @@ import os
 import asyncio
 import platform
 import base64
-from typing import List, Optional, Union
-from pydantic import BaseModel, Field
-from pydantic import BaseModel, Field
-from typing import Literal, Union
-
+from typing import List, Optional, Union, Literal
+from pydantic import BaseModel, Field, PydanticUserError
 import nest_asyncio
 from playwright.async_api import Page, async_playwright
 from IPython import display
@@ -18,15 +15,13 @@ nest_asyncio.apply()
 # Initialize the OpenAI client
 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# Pydantic models for structured outputs
+# Updated Pydantic models for structured outputs
 class BBox(BaseModel):
     x: float
     y: float
     text: str
     type: str
     ariaLabel: str
-
-
 
 class ClickAction(BaseModel):
     type: Literal["click"] = "click"
@@ -40,7 +35,7 @@ class TypeTextAction(BaseModel):
 class ScrollAction(BaseModel):
     type: Literal["scroll"] = "scroll"
     target: str = Field(..., description="WINDOW or the ID of the bounding box to scroll")
-    direction: str = Field(..., enum=["up", "down"], description="The direction to scroll")
+    direction: Literal["up", "down"] = Field(..., description="The direction to scroll")
 
 class WaitAction(BaseModel):
     type: Literal["wait"] = "wait"
@@ -52,17 +47,16 @@ class ToGoogleAction(BaseModel):
     type: Literal["to_google"] = "to_google"
 
 class AgentAction(BaseModel):
+    type: Literal["agent_action"] = "agent_action"
     action: Union[ClickAction, TypeTextAction, ScrollAction, WaitAction, GoBackAction, ToGoogleAction]
-
-class AgentResponse(BaseModel):
-    action: AgentAction
-    explanation: str
+    explanation: str = Field(..., description="Explanation for the chosen action")
 
 class FinalResponse(BaseModel):
-    content: str
+    type: Literal["final_response"] = "final_response"
+    content: str = Field(..., description="The final response content")
 
 class AgentOutput(BaseModel):
-    response: Union[AgentResponse, FinalResponse]
+    response: Union[AgentAction, FinalResponse] = Field(..., discriminator="type")
 
 # Tool functions (keep the existing implementations)
 async def click(page: Page, bbox_id: int, bboxes: List[BBox]):
@@ -166,12 +160,16 @@ def format_descriptions(bboxes: List[BBox]) -> str:
     return "\nValid Bounding Boxes:\n" + "\n".join(labels)
 
 async def call_openai_with_pydantic(messages: List[dict], page_state: str):
-    response = await client.beta.chat.completions.parse(
-        model="gpt-4o-2024-08-06",
-        messages=messages + [{"role": "system", "content": f"Current page state: {page_state}"}],
-        response_format=AgentOutput,
-    )
-    return response.choices[0].message
+    try:
+        response = await client.beta.chat.completions.parse(
+            model="gpt-4o-2024-08-06",
+            messages=messages + [{"role": "system", "content": f"Current page state: {page_state}"}],
+            response_format=AgentOutput
+        )
+        return response.choices[0].message
+    except Exception as e:
+        print(f"Error calling OpenAI API: {str(e)}")
+        return None
 
 async def call_agent(question: str, page: Page, max_steps: int = 150):
     messages = [{"role": "user", "content": question}]
@@ -182,13 +180,21 @@ async def call_agent(question: str, page: Page, max_steps: int = 150):
     for step in range(max_steps):
         response = await call_openai_with_pydantic(messages, bbox_descriptions)
         
-        if isinstance(response.parsed.response, FinalResponse):
+        if response is None:
+            print("Failed to get a response from OpenAI. Ending the conversation.")
+            return "Failed to get a response from OpenAI."
+
+        if response.refusal:
+            print(f"Model refused to respond: {response.refusal}")
+            return f"Model refused to respond: {response.refusal}"
+
+        if response.parsed.response.type == "final_response":
             print(f"Final response: {response.parsed.response.content}")
             return response.parsed.response.content
 
-        agent_response = response.parsed.response
-        action = agent_response.action.action
-        messages.append({"role": "assistant", "content": agent_response.explanation})
+        agent_action = response.parsed.response
+        action = agent_action.action
+        messages.append({"role": "assistant", "content": agent_action.explanation})
 
         if isinstance(action, ClickAction):
             result = await click(page, action.bbox_id, bboxes)
