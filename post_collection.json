@@ -1,0 +1,124 @@
+{
+    "info": {
+        "name": "Job API Testing",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "1. Submit Job",
+            "request": {
+                "url": "{{base_url}}/submit-job",
+                "method": "POST",
+                "header": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                    }
+                ],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"job_data\": \"Your job data here\"\n}"
+                }
+            },
+            "response": [],
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "exec": [
+                            "var jsonData = pm.response.json();",
+                            "pm.globals.set(\"message_id\", jsonData.message_id);",
+                            "pm.test(\"Status code is 200\", function () {",
+                            "    pm.response.to.have.status(200);",
+                            "});",
+                            "pm.test(\"message_id is present\", function () {",
+                            "    pm.expect(jsonData.message_id).to.exist;",
+                            "});"
+                        ],
+                        "type": "text/javascript"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "2. Check Job Status",
+            "request": {
+                "url": "{{base_url}}/check-status/{{message_id}}",
+                "method": "GET"
+            },
+            "response": [],
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "exec": [
+                            "var jsonData = pm.response.json();",
+                            "pm.test(\"Status code is 200\", function () {",
+                            "    pm.response.to.have.status(200);",
+                            "});",
+                            "pm.test(\"Status is present\", function () {",
+                            "    pm.expect(jsonData.status).to.exist;",
+                            "});",
+                            "if (jsonData.status === \"completed\") {",
+                            "    postman.setNextRequest(\"3. Download Results\");",
+                            "} else {",
+                            "    postman.setNextRequest(\"2. Check Job Status\");",
+                            "}"
+                        ],
+                        "type": "text/javascript"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "3. Download Results",
+            "request": {
+                "url": "{{base_url}}/download-results/{{message_id}}",
+                "method": "GET"
+            },
+            "response": [],
+            "event": [
+                {
+                    "listen": "test",
+                    "script": {
+                        "exec": [
+                            "pm.test(\"Status code is 200\", function () {",
+                            "    pm.response.to.have.status(200);",
+                            "});",
+                            "",
+                            "pm.test(\"Content-Type is present\", function () {",
+                            "    pm.response.to.have.header(\"Content-Type\");",
+                            "});",
+                            "",
+                            "pm.test(\"Content-Type is application/zip\", function () {",
+                            "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/zip\");",
+                            "});",
+                            "",
+                            "pm.test(\"Response has content\", function () {",
+                            "    pm.expect(pm.response.size().body).to.be.above(0);",
+                            "});",
+                            "",
+                            "// Optional: Save the zip file",
+                            "pm.test(\"Save zip file\", function () {",
+                            "    const fs = require('fs');",
+                            "    const path = require('path');",
+                            "    ",
+                            "    const zipFileName = `results_${pm.globals.get(\"message_id\")}.zip`;",
+                            "    const downloadPath = path.join(__dirname, zipFileName);",
+                            "    ",
+                            "    fs.writeFile(downloadPath, pm.response.body, function(err) {",
+                            "        if (err) {",
+                            "            console.error(\"Failed to save zip file:\", err);",
+                            "            throw new Error(\"Failed to save zip file\");",
+                            "        }",
+                            "        console.log(\"Zip file saved to:\", downloadPath);",
+                            "    });",
+                            "});"
+                        ],
+                        "type": "text/javascript"
+                    }
+                }
+            ]
+        }
+    ]
+}
